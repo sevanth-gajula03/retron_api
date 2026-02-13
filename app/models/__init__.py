@@ -11,6 +11,7 @@ from app.models.invitation import Invitation
 from app.models.mentor_assignment import MentorAssignment
 from app.models.mentor_course_assignment import MentorCourseAssignment
 from app.models.module import Module
+from app.models.password_setup_token import PasswordSetupToken
 from app.models.section import Section
 from app.models.sub_section import SubSection
 from app.models.user import User
@@ -31,6 +32,7 @@ __all__ = [
     "MentorAssignment",
     "MentorCourseAssignment",
     "Module",
+    "PasswordSetupToken",
     "Section",
     "SubSection",
     "User",

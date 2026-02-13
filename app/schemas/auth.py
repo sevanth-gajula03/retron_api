@@ -21,3 +21,8 @@ class TokenResponse(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str
+
+
+class SetPasswordRequest(BaseModel):
+    token: str
+    new_password: str

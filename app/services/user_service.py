@@ -13,13 +13,21 @@ def get_user_by_id(db: Session, user_id: str) -> User | None:
     return db.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
 
 
-def create_user(db: Session, email: str, password: str, name: str | None, role: str | None) -> User:
+def create_user(
+    db: Session,
+    email: str,
+    password: str,
+    name: str | None,
+    role: str | None,
+    password_setup_completed: bool = True,
+) -> User:
     user = User(
         email=email,
         hashed_password=hash_password(password),
         name=name,
         role=role or "student",
-        status="active"
+        status="active",
+        password_setup_completed=password_setup_completed,
     )
     db.add(user)
     db.commit()
