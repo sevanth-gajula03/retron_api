@@ -1,18 +1,58 @@
-from datetime import datetime
+from datetime import datetime, timedelta
+import hashlib
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.deps import get_current_user, require_roles
 from app.db.session import get_db
+from app.models.announcement import Announcement
+from app.models.assessment import AssessmentSubmission
+from app.models.assessment_access import AssessmentAccess
 from app.models.course import Course
+from app.models.course_co_instructor import CourseCoInstructor
+from app.models.course_progress import CourseProgress
 from app.models.enrollment import Enrollment
+from app.models.invitation import Invitation
+from app.models.mentor_assignment import MentorAssignment
+from app.models.mentor_course_assignment import MentorCourseAssignment
+from app.models.password_setup_token import PasswordSetupToken
 from app.models.user import User
-from app.schemas.user import UserOut, UserUpdate
+from app.schemas.user import UserOut, UserProvisionRequest, UserProvisionResponse, UserUpdate
+from app.services.email_service import send_password_setup_email
+from app.services.user_service import create_user, get_user_by_email
 
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+ALLOWED_PROVISION_ROLES = {"student", "instructor", "partner_instructor", "guest"}
+
+
+def _hash_setup_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _send_setup_link(db: Session, user: User) -> None:
+    raw_token = secrets.token_urlsafe(48)
+    token_row = PasswordSetupToken(
+        user_id=user.id,
+        token_hash=_hash_setup_token(raw_token),
+        expires_at=datetime.utcnow() + timedelta(minutes=settings.password_setup_token_expire_minutes),
+    )
+    db.add(token_row)
+    db.commit()
+
+    setup_link = f"{settings.frontend_base_url.rstrip('/')}/reset-password?token={raw_token}"
+    try:
+        send_password_setup_email(user.email, setup_link)
+    except HTTPException:
+        db.delete(token_row)
+        db.commit()
+        raise
 
 
 @router.get("", response_model=list[UserOut])
@@ -57,6 +97,66 @@ def update_me(payload: UserUpdate, db: Session = Depends(get_db), user=Depends(g
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.post("/provision", response_model=UserProvisionResponse)
+def provision_user(
+    payload: UserProvisionRequest,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("admin")),
+):
+    email = str(payload.email).strip().lower()
+    role = payload.role.strip().lower()
+
+    if not email.endswith("@gmail.com"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Only @gmail.com email addresses are allowed",
+        )
+
+    if role not in ALLOWED_PROVISION_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid role",
+        )
+
+    existing = get_user_by_email(db, email)
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+
+    user = create_user(
+        db,
+        email=email,
+        password=secrets.token_urlsafe(24),
+        name=payload.name,
+        role=role,
+        password_setup_completed=False,
+    )
+
+    try:
+        _send_setup_link(db, user)
+    except HTTPException:
+        db.delete(user)
+        db.commit()
+        raise
+
+    return UserProvisionResponse(
+        id=user.id,
+        email=user.email,
+        role=user.role,
+        status=user.status,
+        message="User created and password setup email sent",
+    )
+
+
+@router.post("/{user_id}/resend-setup-email")
+def resend_setup_email(user_id: str, db: Session = Depends(get_db), _=Depends(require_roles("admin"))):
+    user = db.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    _send_setup_link(db, user)
+    return {"status": "ok", "message": "Password setup email resent"}
 
 
 @router.patch("/{user_id}", response_model=UserOut)
@@ -126,6 +226,73 @@ def delete_user(user_id: str, db: Session = Depends(get_db), _=Depends(require_r
     user = db.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    db.delete(user)
-    db.commit()
-    return {"status": "ok"}
+
+    has_owned_courses = db.execute(
+        select(Course.id).where(Course.instructor_id == user.id).limit(1)
+    ).scalar_one_or_none()
+    if has_owned_courses:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete user who owns courses. Reassign or delete their courses first.",
+        )
+
+    try:
+        now = datetime.utcnow()
+        db.execute(delete(PasswordSetupToken).where(PasswordSetupToken.user_id == user.id))
+        db.execute(delete(Enrollment).where(Enrollment.user_id == user.id))
+        db.execute(delete(CourseProgress).where(CourseProgress.user_id == user.id))
+        db.execute(delete(AssessmentSubmission).where(AssessmentSubmission.user_id == user.id))
+        db.execute(delete(AssessmentAccess).where(AssessmentAccess.student_id == user.id))
+        db.execute(
+            update(AssessmentAccess)
+            .where(AssessmentAccess.mentor_id == user.id)
+            .values(mentor_id=None, updated_at=now)
+        )
+        db.execute(
+            update(AssessmentAccess)
+            .where(AssessmentAccess.granted_by == user.id)
+            .values(granted_by=None, updated_at=now)
+        )
+        db.execute(
+            delete(MentorAssignment).where(
+                (MentorAssignment.student_id == user.id) | (MentorAssignment.mentor_id == user.id)
+            )
+        )
+        db.execute(
+            update(MentorAssignment)
+            .where(MentorAssignment.assigned_by == user.id)
+            .values(assigned_by=None, updated_at=now)
+        )
+        db.execute(delete(MentorCourseAssignment).where(MentorCourseAssignment.mentor_id == user.id))
+        db.execute(
+            update(MentorCourseAssignment)
+            .where(MentorCourseAssignment.assigned_by == user.id)
+            .values(assigned_by=None, updated_at=now)
+        )
+        db.execute(delete(CourseCoInstructor).where(CourseCoInstructor.user_id == user.id))
+        db.execute(
+            update(CourseCoInstructor)
+            .where(CourseCoInstructor.added_by == user.id)
+            .values(added_by=None, updated_at=now)
+        )
+        db.execute(
+            delete(Invitation).where(
+                (Invitation.inviter_id == user.id) | (Invitation.invitee_id == user.id)
+            )
+        )
+        db.execute(delete(Announcement).where(Announcement.author_id == user.id))
+        db.execute(
+            update(User)
+            .where(User.mentor_id == user.id)
+            .values(mentor_id=None, updated_at=now)
+        )
+
+        db.delete(user)
+        db.commit()
+        return {"status": "ok"}
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="User cannot be deleted due to remaining linked records",
+        )

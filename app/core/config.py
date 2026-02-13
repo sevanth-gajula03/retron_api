@@ -8,6 +8,10 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 14
     cors_origins: str = ""
+    sendgrid_api_key: str | None = None
+    email_from: str | None = None
+    frontend_base_url: str = "http://localhost:5173"
+    password_setup_token_expire_minutes: int = 60
 
     @property
     def cors_origin_list(self) -> list[str]:
