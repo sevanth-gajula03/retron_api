@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -25,5 +25,6 @@ class User(Base):
     banned_from: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     permissions: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     guest_access_expiry: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    password_setup_completed: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

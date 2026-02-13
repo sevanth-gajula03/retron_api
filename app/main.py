@@ -25,13 +25,22 @@ from app.core.config import settings
 app = FastAPI(title="LMS Backend")
 
 
-if settings.cors_origin_list:
+cors_origins = settings.cors_origin_list or ["http://localhost:5173"]
+if cors_origins == ["*"]:
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origin_list,
-        allow_credentials=True,
+        allow_origin_regex=".*",
+        allow_credentials=False,
         allow_methods=["*"],
-        allow_headers=["*"]
+        allow_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
 

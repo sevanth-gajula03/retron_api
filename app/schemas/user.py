@@ -18,6 +18,7 @@ class UserOut(BaseModel):
     banned_from: list[str] | None = None
     permissions: dict | None = None
     guest_access_expiry: datetime | None = None
+    password_setup_completed: bool
     created_at: datetime
     updated_at: datetime
 
@@ -35,3 +36,17 @@ class UserUpdate(BaseModel):
     banned_from: list[str] | None = None
     permissions: dict | None = None
     guest_access_expiry: datetime | None = None
+
+
+class UserProvisionRequest(BaseModel):
+    email: EmailStr
+    role: str
+    name: str | None = None
+
+
+class UserProvisionResponse(BaseModel):
+    id: str
+    email: EmailStr
+    role: str
+    status: str
+    message: str
