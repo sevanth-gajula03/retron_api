@@ -19,12 +19,16 @@ class AssessmentOut(BaseModel):
     course_id: str
     title: str
     description: str | None = None
+    created_by: str | None = None
+    instructor_id: str | None = None
+    instructor_name: str | None = None
+    status: str | None = None
     created_at: datetime
 
 
 class AssessmentQuestionCreate(BaseModel):
     prompt: str
-    options: dict | None = None
+    options: list[str] | dict | None = None
     answer: str | None = None
 
 
@@ -32,7 +36,7 @@ class AssessmentQuestionOut(BaseModel):
     id: str
     assessment_id: str
     prompt: str
-    options: dict | None = None
+    options: list[str] | dict | None = None
     answer: str | None = None
 
 
