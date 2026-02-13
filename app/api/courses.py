@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_current_user, require_roles
 from app.db.session import get_db
 from app.models.course import Course
+from app.models.course_co_instructor import CourseCoInstructor
 from app.models.announcement import Announcement
 from app.models.assessment import Assessment, AssessmentQuestion, AssessmentSubmission
 from app.models.enrollment import Enrollment
@@ -23,8 +24,19 @@ router = APIRouter(prefix="/courses", tags=["courses"])
 def list_courses(db: Session = Depends(get_db), user=Depends(get_current_user)):
     if user.role == "admin":
         return db.execute(select(Course)).scalars().all()
-    if user.role == "instructor":
-        return db.execute(select(Course).where(Course.instructor_id == user.id)).scalars().all()
+    if user.role in ["instructor", "partner_instructor"]:
+        return db.execute(
+            select(Course)
+            .outerjoin(CourseCoInstructor, CourseCoInstructor.course_id == Course.id)
+            .where(
+                (Course.instructor_id == user.id)
+                | (
+                    (CourseCoInstructor.user_id == user.id)
+                    & (CourseCoInstructor.status == "active")
+                )
+            )
+            .distinct()
+        ).scalars().all()
     return db.execute(
         select(Course)
         .outerjoin(Enrollment, Enrollment.course_id == Course.id)
@@ -59,14 +71,22 @@ def get_course(course_id: str, db: Session = Depends(get_db), user=Depends(get_c
     course = db.execute(select(Course).where(Course.id == course_id)).scalar_one_or_none()
     if not course:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course not found")
-    if user.role not in ["admin", "instructor"] and course.status != "published":
+    if user.role not in ["admin", "instructor", "partner_instructor"] and course.status != "published":
         enrolled = db.execute(
             select(Enrollment).where(Enrollment.course_id == course_id, Enrollment.user_id == user.id)
         ).scalar_one_or_none()
         if not enrolled:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-    if user.role == "instructor" and course.instructor_id != user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if user.role in ["instructor", "partner_instructor"] and course.instructor_id != user.id:
+        assigned = db.execute(
+            select(CourseCoInstructor).where(
+                CourseCoInstructor.course_id == course_id,
+                CourseCoInstructor.user_id == user.id,
+                CourseCoInstructor.status == "active",
+            )
+        ).scalar_one_or_none()
+        if not assigned:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     return course
 
 
@@ -75,9 +95,17 @@ def list_sections_for_course(course_id: str, db: Session = Depends(get_db), user
     course = db.execute(select(Course).where(Course.id == course_id)).scalar_one_or_none()
     if not course:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course not found")
-    if user.role == "instructor" and course.instructor_id != user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-    if user.role not in ["admin", "instructor"] and course.status != "published":
+    if user.role in ["instructor", "partner_instructor"] and course.instructor_id != user.id:
+        assigned = db.execute(
+            select(CourseCoInstructor).where(
+                CourseCoInstructor.course_id == course_id,
+                CourseCoInstructor.user_id == user.id,
+                CourseCoInstructor.status == "active",
+            )
+        ).scalar_one_or_none()
+        if not assigned:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if user.role not in ["admin", "instructor", "partner_instructor"] and course.status != "published":
         enrolled = db.execute(
             select(Enrollment).where(Enrollment.course_id == course_id, Enrollment.user_id == user.id)
         ).scalar_one_or_none()
@@ -96,8 +124,16 @@ def update_course(
     course = db.execute(select(Course).where(Course.id == course_id)).scalar_one_or_none()
     if not course:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course not found")
-    if user.role == "instructor" and course.instructor_id != user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if user.role in ["instructor", "partner_instructor"] and course.instructor_id != user.id:
+        assigned = db.execute(
+            select(CourseCoInstructor).where(
+                CourseCoInstructor.course_id == course_id,
+                CourseCoInstructor.user_id == user.id,
+                CourseCoInstructor.status == "active",
+            )
+        ).scalar_one_or_none()
+        if not assigned:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     data = payload.model_dump(exclude_unset=True)
     for key, value in data.items():
         setattr(course, key, value)
