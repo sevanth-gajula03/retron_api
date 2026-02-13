@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     frontend_base_url: str = "http://localhost:5173"
     password_setup_token_expire_minutes: int = 60
 
+    # When enabled, /auth/signup will create a user account.
+    # Keep this disabled in production unless you intend to allow public signup.
+    self_signup_enabled: bool = False
+    self_signup_allow_admin: bool = False
+
     # Bootstrap only: enable one-time admin creation via /auth/signup.
     # In production, set BOOTSTRAP_ADMIN_ENABLED=true and (optionally)
     # BOOTSTRAP_ADMIN_EMAIL=admin@gmail.com, create the admin, then unset.
@@ -30,4 +35,4 @@ class Settings(BaseSettings):
         case_sensitive = False
 
 
-settings = Settings()
+settings = Settings()  # pyright: ignore[reportCallIssue]

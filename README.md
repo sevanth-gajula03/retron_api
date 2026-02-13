@@ -35,6 +35,16 @@ To create the first admin in production:
 
 3) Immediately redeploy with `BOOTSTRAP_ADMIN_ENABLED=false` (or unset it).
 
+## Public signup (temporary)
+
+If you want to open up `POST /auth/signup` for everyone, deploy with:
+
+- `SELF_SIGNUP_ENABLED=true`
+
+To also allow creating admins via signup (highly risky), set:
+
+- `SELF_SIGNUP_ALLOW_ADMIN=true`
+
 ## Cloud Run
 
 Local container run:
