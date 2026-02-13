@@ -21,7 +21,7 @@ from app.api.sub_sections import router as sub_sections_router
 from app.api.users import router as users_router
 from app.core.config import settings
 
-
+# 
 app = FastAPI(title="LMS Backend")
 
 
