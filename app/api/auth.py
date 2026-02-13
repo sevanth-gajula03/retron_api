@@ -14,16 +14,67 @@ from app.models.password_setup_token import PasswordSetupToken
 from app.models.user import User
 from app.schemas.auth import LoginRequest, RefreshRequest, SetPasswordRequest, SignupRequest, TokenResponse
 from app.schemas.user import UserOut
-from app.services.user_service import authenticate_user
+from app.services.user_service import authenticate_user, create_user, get_user_by_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/signup", response_model=TokenResponse)
-def signup(_: SignupRequest, __: Session = Depends(get_db)):
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Self signup is disabled. Please contact an administrator.",
+def signup(payload: SignupRequest, db: Session = Depends(get_db)):
+    if not settings.bootstrap_admin_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Self signup is disabled. Please contact an administrator.",
+        )
+
+    email = str(payload.email).strip().lower()
+
+    if settings.bootstrap_admin_email:
+        allowed = settings.bootstrap_admin_email.strip().lower()
+        if email != allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Signup is restricted.",
+            )
+
+    requested_role = (payload.role or "admin").strip().lower()
+    if requested_role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Only admin bootstrap signup is allowed.",
+        )
+
+    if len(payload.password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Password must be at least 8 characters",
+        )
+
+    existing_admin_id = db.execute(
+        select(User.id).where(User.role == "admin").limit(1)
+    ).scalar_one_or_none()
+    if existing_admin_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin already exists; bootstrap signup is disabled.",
+        )
+
+    existing = get_user_by_email(db, email)
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+
+    user = create_user(
+        db,
+        email=email,
+        password=payload.password,
+        name=payload.name,
+        role="admin",
+        password_setup_completed=True,
+    )
+
+    return TokenResponse(
+        access_token=create_access_token(user.id),
+        refresh_token=create_refresh_token(user.id),
     )
 
 
