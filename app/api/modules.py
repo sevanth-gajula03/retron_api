@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import desc, select
@@ -119,6 +119,7 @@ def _build_public_quiz(module: Module) -> ModuleQuizPublicOut:
         title=module.title,
         questions=public_questions,
         max_score=max_score,
+        time_limit_seconds=getattr(module, "time_limit_seconds", None),
     )
 
 
@@ -149,6 +150,7 @@ def create_module(
         type=payload.type,
         content=payload.content,
         quiz_data=payload.quiz_data,
+        time_limit_seconds=payload.time_limit_seconds,
         order=payload.order or 0,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow()
@@ -331,9 +333,25 @@ def start_module_quiz_attempt(
     db.commit()
     db.refresh(attempt)
 
+    time_limit_seconds = getattr(module, "time_limit_seconds", None)
+    expires_at = None
+    if time_limit_seconds is not None:
+        try:
+            limit = int(time_limit_seconds)
+        except (TypeError, ValueError):
+            limit = 0
+        if limit > 0:
+            expires_at = attempt.started_at + timedelta(seconds=limit)
+
+    # Ensure timestamps are timezone-aware in JSON (+00:00) so JS timers
+    # don't misinterpret them as local time.
+    started_at_out = attempt.started_at.replace(tzinfo=timezone.utc) if attempt.started_at else None
+    expires_at_out = expires_at.replace(tzinfo=timezone.utc) if expires_at else None
+
     return ModuleQuizAttemptStartOut(
         attempt_id=attempt.id,
-        started_at=attempt.started_at,
+        started_at=started_at_out or datetime.now(timezone.utc),
+        expires_at=expires_at_out,
         quiz=_build_public_quiz(module),
     )
 
@@ -368,6 +386,19 @@ def submit_module_quiz_attempt(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attempt not found")
     if attempt.submitted_at is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Attempt already submitted")
+
+    # Enforce optional time limit (with small grace window).
+    time_limit_seconds = getattr(module, "time_limit_seconds", None)
+    if time_limit_seconds is not None:
+        try:
+            limit = int(time_limit_seconds)
+        except (TypeError, ValueError):
+            limit = 0
+        if limit > 0 and attempt.started_at is not None:
+            grace_seconds = 5
+            expires_at = attempt.started_at + timedelta(seconds=limit)
+            if datetime.utcnow() > (expires_at + timedelta(seconds=grace_seconds)):
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Time limit exceeded")
 
     quiz = _normalize_quiz_data(module.quiz_data)
     if not quiz:

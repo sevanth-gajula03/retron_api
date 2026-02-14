@@ -21,6 +21,9 @@ class Module(Base):
     # For quiz modules, this stores the full quiz (including correct answers).
     # Student-facing APIs must not return the correct answers.
     quiz_data: Mapped[Optional[list[dict]]] = mapped_column(JSON, nullable=True)
+
+    # Optional time limit for quiz modules. Null means no time limit.
+    time_limit_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

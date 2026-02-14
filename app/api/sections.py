@@ -1,13 +1,17 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.deps import require_roles
 from app.db.session import get_db
 from app.models.course import Course
+from app.models.module import Module
+from app.models.module_quiz_attempt import ModuleQuizAttempt
 from app.models.section import Section
+from app.models.sub_section import SubSection
 from app.schemas.section import SectionCreate, SectionOut, SectionUpdate
 
 
@@ -73,6 +77,16 @@ def delete_section(
     course = db.execute(select(Course).where(Course.id == section.course_id)).scalar_one_or_none()
     if user.role == "instructor" and course and course.instructor_id != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-    db.delete(section)
-    db.commit()
-    return {"status": "ok"}
+    try:
+        # Delete children explicitly since the DB FKs do not cascade.
+        module_ids_subq = select(Module.id).where(Module.section_id == section_id)
+        db.execute(delete(ModuleQuizAttempt).where(ModuleQuizAttempt.module_id.in_(module_ids_subq)))
+        db.execute(delete(Module).where(Module.section_id == section_id))
+        db.execute(delete(SubSection).where(SubSection.section_id == section_id))
+
+        db.delete(section)
+        db.commit()
+        return {"status": "ok"}
+    except SQLAlchemyError:
+        db.rollback()
+        raise

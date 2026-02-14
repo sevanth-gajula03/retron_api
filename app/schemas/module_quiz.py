@@ -15,11 +15,13 @@ class ModuleQuizPublicOut(BaseModel):
     title: str | None = None
     questions: list[ModuleQuizQuestionPublic]
     max_score: int
+    time_limit_seconds: int | None = None
 
 
 class ModuleQuizAttemptStartOut(BaseModel):
     attempt_id: str
     started_at: datetime
+    expires_at: datetime | None = None
     quiz: ModuleQuizPublicOut
 
 
