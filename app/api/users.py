@@ -4,14 +4,14 @@ import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import delete, select, update
+from sqlalchemy import desc, delete, select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.deps import get_current_user, require_roles
 from app.db.session import get_db
 from app.models.announcement import Announcement
-from app.models.assessment import AssessmentSubmission
+from app.models.assessment import Assessment, AssessmentSubmission
 from app.models.assessment_access import AssessmentAccess
 from app.models.course import Course
 from app.models.course_co_instructor import CourseCoInstructor
@@ -21,8 +21,12 @@ from app.models.invitation import Invitation
 from app.models.mentor_assignment import MentorAssignment
 from app.models.mentor_course_assignment import MentorCourseAssignment
 from app.models.password_setup_token import PasswordSetupToken
+from app.models.section import Section
 from app.models.user import User
+from app.models.module import Module
+from app.models.module_quiz_attempt import ModuleQuizAttempt
 from app.schemas.user import UserOut, UserProvisionRequest, UserProvisionResponse, UserUpdate
+from app.schemas.student_results import StudentAssessmentSubmissionOut, StudentModuleQuizAttemptOut
 from app.services.email_service import send_password_setup_email
 from app.services.user_service import create_user, get_user_by_email
 
@@ -219,6 +223,95 @@ def get_user(user_id: str, db: Session = Depends(get_db), user=Depends(get_curre
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
     return target
+
+
+@router.get("/{user_id}/module-quiz-attempts", response_model=list[StudentModuleQuizAttemptOut])
+def list_student_module_quiz_attempts(
+    user_id: str,
+    db: Session = Depends(get_db),
+    actor=Depends(require_roles("admin", "instructor")),
+):
+    target = db.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    query = (
+        select(ModuleQuizAttempt, Module, Course)
+        .join(Module, Module.id == ModuleQuizAttempt.module_id)
+        .join(Section, Section.id == Module.section_id)
+        .join(Course, Course.id == Section.course_id)
+        .where(ModuleQuizAttempt.user_id == user_id)
+        .order_by(desc(ModuleQuizAttempt.created_at))
+    )
+    if actor.role == "instructor":
+        query = query.where(Course.instructor_id == actor.id)
+
+    rows = db.execute(query).all()
+    results: list[StudentModuleQuizAttemptOut] = []
+    for attempt, module, course in rows:
+        results.append(
+            StudentModuleQuizAttemptOut(
+                attempt_id=attempt.id,
+                module_id=module.id,
+                module_title=module.title,
+                course_id=course.id,
+                course_title=course.title,
+                started_at=attempt.started_at,
+                submitted_at=attempt.submitted_at,
+                score=attempt.score,
+                max_score=attempt.max_score,
+                created_at=attempt.created_at,
+            )
+        )
+    return results
+
+
+@router.get("/{user_id}/assessment-submissions", response_model=list[StudentAssessmentSubmissionOut])
+def list_student_assessment_submissions(
+    user_id: str,
+    db: Session = Depends(get_db),
+    actor=Depends(require_roles("admin", "instructor", "partner_instructor")),
+):
+    target = db.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    # IMPORTANT: Do not select the Assessment ORM entity here.
+    # This codebase has an Assessment model that may include columns not present
+    # in older DBs. Selecting the entity would attempt to load all mapped columns.
+    query = (
+        select(
+            AssessmentSubmission,
+            Assessment.id.label("assessment_id"),
+            Assessment.title.label("assessment_title"),
+            Assessment.course_id.label("course_id"),
+            Course.title.label("course_title"),
+        )
+        .join(Assessment, Assessment.id == AssessmentSubmission.assessment_id)
+        .join(Course, Course.id == Assessment.course_id)
+        .where(AssessmentSubmission.user_id == user_id)
+        .order_by(desc(AssessmentSubmission.created_at))
+    )
+    if actor.role in ["instructor", "partner_instructor"]:
+        query = query.where(Course.instructor_id == actor.id)
+
+    rows = db.execute(query).all()
+    results: list[StudentAssessmentSubmissionOut] = []
+    for submission, assessment_id, assessment_title, course_id, course_title in rows:
+        answers = submission.answers if isinstance(submission.answers, dict) else {}
+        results.append(
+            StudentAssessmentSubmissionOut(
+                submission_id=submission.id,
+                assessment_id=assessment_id,
+                assessment_title=assessment_title,
+                course_id=course_id,
+                course_title=course_title,
+                created_at=submission.created_at,
+                score=submission.score,
+                answer_count=len(list(answers.keys())),
+            )
+        )
+    return results
 
 
 @router.delete("/{user_id}")

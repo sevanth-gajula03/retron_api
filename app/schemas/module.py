@@ -10,6 +10,8 @@ class ModuleCreate(BaseModel):
     title: Optional[str] = None
     type: str
     content: Optional[str] = None
+    # For quiz modules: list of question objects. Stored as JSON.
+    quiz_data: list[dict] | None = None
     order: Optional[int] = None
 
 
@@ -17,6 +19,7 @@ class ModuleUpdate(BaseModel):
     title: Optional[str] = None
     type: Optional[str] = None
     content: Optional[str] = None
+    quiz_data: list[dict] | None = None
     order: Optional[int] = None
     sub_section_id: Optional[str] = None
 
@@ -28,6 +31,7 @@ class ModuleOut(BaseModel):
     title: Optional[str] = None
     type: str
     content: Optional[str] = None
+    quiz_data: list[dict] | None = None
     order: int
     created_at: datetime
     updated_at: datetime

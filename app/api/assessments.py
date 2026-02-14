@@ -189,6 +189,7 @@ def submit_assessment(
         student_email=getattr(user, "email", None),
         student_name=getattr(user, "full_name", None) or getattr(user, "name", None),
         answers=payload.answers,
+        submitted_at=datetime.utcnow(),
         created_at=datetime.utcnow()
     )
     db.add(submission)
